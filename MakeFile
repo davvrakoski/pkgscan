@@ -1,0 +1,11 @@
+CC=gcc
+
+.PHONY: all clean
+
+all: main
+
+main: main.c
+	$(CC) -o main main.c
+
+clean:
+	rm -f main main.o
