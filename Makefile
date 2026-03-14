@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra
 LIBS = -lcurl -lcjson
-TARGET = PKGInspect
+TARGET = pkgscan
 
 all: $(TARGET)
 
@@ -10,7 +10,7 @@ $(TARGET): main.c
 
 install: all
 	install -m 755 $(TARGET) /usr/local/bin/$(TARGET)
-	install -m 755 pkginspect_wrapper.sh /usr/local/bin/aur
+	install -m 755 pkgscan_wrapper.sh /usr/local/bin/aur
 
 uninstall:
 	rm -f /usr/local/bin/$(TARGET)

@@ -128,12 +128,36 @@ int check_suspicion(struct pkg_metadata *meta, struct suspicion *flags) {
 
 
 int main(int argc, char *argv[]) {
-	if (argc != 2) {
-		printf("Usage: %s filename\n", argv[0]);
-		return 0;
+		if (argc < 2) {
+	    printf("Usage: %s <package> [package2 ...]\n", argv[0]);
+	    return 1;
 	}
-	char *pkg = argv[1];
+	if (argc == 2 && strcmp(argv[1], "--help") == 0) {
+	    printf(BOLD "pkgscan" RESET " - AUR Package Security Scanner\n\n");
+	    printf(BOLD "Usage:\n" RESET);
+	    printf("  pkgscan <package>    Scan an AUR package before installing\n");
+	    printf("  aur -S <package>        Wrapper: scan then install via yay/paru\n\n");
+	    printf(BOLD "Danger Levels:\n" RESET);
+	    printf(GREEN "  Low     " RESET "0        No suspicious patterns found\n");
+	    printf(YELLOW "  Medium  " RESET "1-10     Some patterns detected, review recommended\n");
+	    printf(RED "  High    " RESET "11-19    Suspicious patterns found\n");
+	    printf(RED "  Critical" RESET " 20+     Multiple serious patterns detected\n\n");
+	    printf(BOLD "Keywords config:\n" RESET);
+	    printf("  Edit keywords.h and recompile to add/remove patterns\n");
+	    return 0;
+	}
+		if (system("command -v git > /dev/null 2>&1") != 0) {
+	    printf(RED "Error: git is not installed\n" RESET);
+	    return 1;
+	}
+	if (system("command -v makepkg > /dev/null 2>&1") != 0) {
+	    printf(RED "Error: makepkg is not installed (base-devel required)\n" RESET);
+	    return 1;
+	}
+	for (int i = 1; i < argc; i++) {
+	char *pkg = argv[i];
 	if (!validate_pkg_name(pkg)) return 1;
+	printf(BOLD "\n=== Scanning package %i of %i: '%s' ===\n" RESET, i, argc - 1, pkg);
 	aur_clone(pkg);
 	struct pkg_metadata meta;
 	struct suspicion flags[16];
@@ -174,20 +198,21 @@ int main(int argc, char *argv[]) {
 	}
 	int danger = parser(file, s);
 
-	printf("\n" BOLD "=== PKGInspect Results for '%s' ===" RESET "\n\n", pkg);
+	printf("\n" BOLD "=== pkgscan Results for '%s' ===" RESET "\n\n", pkg);
 
 	if (danger == 0 && suspicion_count == 0)
-	    printf(GREEN BOLD "✔ Low Risk" RESET " | Danger: %i\n", danger);
+	    printf(GREEN BOLD "Low Risk" RESET " | Danger: %i\n", danger);
 	else if (danger <= 10)
-	    printf(YELLOW BOLD "⚠ Medium Risk" RESET " | Danger: %i\n", danger);
+	    printf(YELLOW BOLD "Medium Risk" RESET " | Danger: %i\n", danger);
 	else if (danger < 20)
-	    printf(RED BOLD "✘ High Risk" RESET " | Danger: %i\n", danger);
+	    printf(RED BOLD "High Risk" RESET " | Danger: %i\n", danger);
 	else
-	    printf(RED BOLD "✘ CRITICAL" RESET " | Danger: %i\n", danger);
+	    printf(RED BOLD "CRITICAL" RESET " | Danger: %i\n", danger);
 	fclose(file);
 	rm_pkg(pkg);
 	if (prompt_install(pkg, danger))
 	do_install(pkg);
+	}
 }
 
 void aur_clone(char *pkg){
