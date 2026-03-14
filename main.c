@@ -6,6 +6,7 @@
 #include <cjson/cJSON.h>
 #include "types.h"
 #include <time.h>
+#include <ctype.h>
 #include "keywords.h"
 
 #define RESET   "\033[0m"
@@ -20,6 +21,8 @@
 char s[LINE_LENGTH];
 
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp);
+
+int validate_pkg_name(const char *pkg);
 
 int fetch_metadata(const char *pkg, struct pkg_metadata *meta);
 
@@ -37,6 +40,23 @@ void do_install(char *pkg);
 
 void cleanup(char *pkg, FILE *file);
 
+int validate_pkg_name(const char *pkg) {
+    if (strlen(pkg) > 64) {
+        printf(RED "Error: Package name too long\n" RESET);
+        return 0;
+    }
+    for (int i = 0; pkg[i]; i++) {
+        if (!isalnum(pkg[i]) && pkg[i] != '-' && pkg[i] != '_' && pkg[i] != '.') {
+            printf(RED "Error: Invalid character '%c' in package name\n" RESET, pkg[i]);
+            return 0;
+        }
+    }
+    if (strstr(pkg, "..") != NULL) {
+        printf(RED "Error: Path traversal detected\n" RESET);
+        return 0;
+    }
+    return 1;
+}
 static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t realsize = size * nmemb;
     struct memory *mem = (struct memory *)userp;
@@ -113,6 +133,7 @@ int main(int argc, char *argv[]) {
 		return 0;
 	}
 	char *pkg = argv[1];
+	if (!validate_pkg_name(pkg)) return 1;
 	aur_clone(pkg);
 	struct pkg_metadata meta;
 	struct suspicion flags[16];
