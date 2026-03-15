@@ -30,15 +30,19 @@ int check_suspicion(struct pkg_metadata *meta, struct suspicion *flags);
 
 int parser(FILE *file, char *s);
 
-void aur_clone(char *pkg);
+void aur_clone(char *pkg, char *clone_dir);
 
-void rm_pkg(char *pkg);
+void rm_pkg(char *clone_dir);
 
 int prompt_install(char *pkg, int danger);
 
-void do_install(char *pkg);
+void do_install(char *pkg, char *clone_dir);
 
-void cleanup(char *pkg, FILE *file);
+void print_risk(char *name, int danger, int suspicion_count, struct suspicion *flags);
+
+int scan_pkgbuild(char *clone_dir);
+
+static const char* get_aur_helper();
 
 int validate_pkg_name(const char *pkg) {
     if (strlen(pkg) > 64) {
@@ -125,7 +129,45 @@ int check_suspicion(struct pkg_metadata *meta, struct suspicion *flags) {
 
     return count;
 }
+void print_risk(char *name, int danger, int suspicion_count, struct suspicion *flags) {
+    printf("\n" BOLD "=== pkgscan Results for '%s' ===" RESET "\n\n", name);
+    if (suspicion_count > 0) {
+        printf(YELLOW "Suspicion Flags (%i):\n" RESET, suspicion_count);
+        for (int i = 0; i < suspicion_count; i++)
+            printf(YELLOW "  - %s\n" RESET, flags[i].reason);
+    }
+    if (danger == 0 && suspicion_count == 0)
+        printf(GREEN BOLD "Low Risk" RESET " | Danger: %i\n", danger);
+    else if (danger <= 10)
+        printf(YELLOW BOLD "Medium Risk" RESET " | Danger: %i\n", danger);
+    else if (danger < 20)
+        printf(RED BOLD "High Risk" RESET " | Danger: %i\n", danger);
+    else
+        printf(RED BOLD "CRITICAL" RESET " | Danger: %i\n", danger);
+}
 
+int scan_pkgbuild(char *clone_dir) {
+    char full_directory[512];
+    snprintf(full_directory, sizeof(full_directory), "%s/PKGBUILD", clone_dir);
+    FILE *file = fopen(full_directory, "r");
+    if (file == NULL) {
+        printf(RED "Error: Could not open %s\n" RESET, full_directory);
+        return -1;
+    }
+    if (fgets(s, LINE_LENGTH, file) == NULL) {
+        fclose(file);
+        return -1;
+    }
+    rewind(file);
+    int danger = parser(file, s);
+    fclose(file);
+    return danger;
+}
+static const char* get_aur_helper() {
+    if (system("command -v paru > /dev/null 2>&1") == 0) return "paru";
+    if (system("command -v yay > /dev/null 2>&1") == 0) return "yay";
+    return NULL;
+}
 
 int main(int argc, char *argv[]) {
 		if (argc < 2) {
@@ -135,8 +177,8 @@ int main(int argc, char *argv[]) {
 	if (argc == 2 && strcmp(argv[1], "--help") == 0) {
 	    printf(BOLD "pkgscan" RESET " - AUR Package Security Scanner\n\n");
 	    printf(BOLD "Usage:\n" RESET);
+	    printf("  pkgscan --test <path>   Scan a local PKGBUILD directory\n");
 	    printf("  pkgscan <package>    Scan an AUR package before installing\n");
-	    printf("  aur -S <package>        Wrapper: scan then install via yay/paru\n\n");
 	    printf(BOLD "Danger Levels:\n" RESET);
 	    printf(GREEN "  Low     " RESET "0        No suspicious patterns found\n");
 	    printf(YELLOW "  Medium  " RESET "1-10     Some patterns detected, review recommended\n");
@@ -154,11 +196,17 @@ int main(int argc, char *argv[]) {
 	    printf(RED "Error: makepkg is not installed (base-devel required)\n" RESET);
 	    return 1;
 	}
+	if (argc == 3 && strcmp(argv[1], "--test") == 0) {
+    	struct suspicion flags[16] = {0};
+    	int danger = scan_pkgbuild(argv[2]);
+    	if (danger >= 0) print_risk(argv[2], danger, 0, flags);
+    	return 0;
+	}
+
 	for (int i = 1; i < argc; i++) {
 	char *pkg = argv[i];
 	if (!validate_pkg_name(pkg)) return 1;
 	printf(BOLD "\n=== Scanning package %i of %i: '%s' ===\n" RESET, i, argc - 1, pkg);
-	aur_clone(pkg);
 	struct pkg_metadata meta;
 	struct suspicion flags[16];
 		int suspicion_count = 0;
@@ -169,86 +217,62 @@ int main(int argc, char *argv[]) {
 		meta.votes,
 		meta.out_of_date ? "YES" : "No");
 	    suspicion_count = check_suspicion(&meta, flags);
-	    if (suspicion_count > 0) {
-		printf(YELLOW"\nSuspicion Flags (%i):\n", suspicion_count);
-		for (int i = 0; i < suspicion_count; i++)
-		    printf(YELLOW "  - %s\n" RESET, flags[i].reason);
-	    }
 	} else {
+	char check_cmd[256];
+    	snprintf(check_cmd, sizeof(check_cmd), "pacman -Si %s > /dev/null 2>&1", pkg);
+   	 if (system(check_cmd) == 0) {
+        printf("'%s' is an official repo package, skipping scan.\n", pkg);
+        const char *helper = get_aur_helper();
+	if (helper == NULL) {
+	    printf(RED "Error: No AUR helper found (yay/paru)\n" RESET);
+	    continue;
+	}
+	char install_cmd[256];
+	snprintf(install_cmd, sizeof(install_cmd), "%s -S %s", helper, pkg);
+	system(install_cmd);
+	continue;    
+	}
 	    printf("Warning: Could not fetch AUR metadata\n");
 	}
-	FILE *file;
-	char full_directory[256];
-	snprintf(full_directory, sizeof(full_directory), "%s/PKGBUILD", pkg);
-	file = fopen(full_directory, "r");
-	 if (file == NULL) {
-        printf("Error: Could not open file %s\n", full_directory);
-	cleanup(pkg, file);
-        return 0;
-    	} else {
-        printf("File %s opened successfully!\n", full_directory);
-	}
-	if (fgets(s, LINE_LENGTH, file) == NULL) {
-		cleanup(pkg, file);
-		return 0;
-	}
+	char clone_dir[256];
+	snprintf(clone_dir, sizeof(clone_dir), "/tmp/pkgscan-%s", pkg);
+	aur_clone(pkg, clone_dir);
+	int danger = scan_pkgbuild(clone_dir);
+	if (danger >= 0) {
+    	print_risk(pkg, danger, suspicion_count, flags);
+    	rm_pkg(clone_dir);
+    	if (prompt_install(pkg, danger))
+        	do_install(pkg, clone_dir);
+	} 	
 	else {
-	rewind(file);
-	printf("File %s read successfully!\n", full_directory);
-	}
-	int danger = parser(file, s);
-
-	printf("\n" BOLD "=== pkgscan Results for '%s' ===" RESET "\n\n", pkg);
-
-	if (danger == 0 && suspicion_count == 0)
-	    printf(GREEN BOLD "Low Risk" RESET " | Danger: %i\n", danger);
-	else if (danger <= 10)
-	    printf(YELLOW BOLD "Medium Risk" RESET " | Danger: %i\n", danger);
-	else if (danger < 20)
-	    printf(RED BOLD "High Risk" RESET " | Danger: %i\n", danger);
-	else
-	    printf(RED BOLD "CRITICAL" RESET " | Danger: %i\n", danger);
-	fclose(file);
-	rm_pkg(pkg);
-	if (prompt_install(pkg, danger))
-	do_install(pkg);
+    	rm_pkg(clone_dir);
+	    }
 	}
 }
 
-void aur_clone(char *pkg){
+void aur_clone(char *pkg, char *clone_dir) {
 	const char *repo_url = "https://aur.archlinux.org/";
 	const char *command = "git clone ";
 	char full_command[256]; 
-	snprintf(full_command, sizeof(full_command), "%s%s%s.git", command, repo_url, pkg);
+	snprintf(full_command, sizeof(full_command), "%s%s%s.git %s", command, repo_url, pkg, clone_dir);
 
 	int status = system(full_command);
 	
     if (status == -1) {
         perror("system");
     } else {
-        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-            printf("git clone successful\n");
-
-        } else {
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
             printf("git clone failed\n");
         }
     }
 }
-void rm_pkg(char *pkg){
+void rm_pkg(char *clone_dir) {
 	char rm_cmd[256];
-	snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", pkg);
+	snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", clone_dir);
 	int status = system(rm_cmd);
 	if (status == -1) {
 	perror("system");
 	}
-	else {
-	printf("Package %s removed successfully\n", pkg);
-	}
-}
-
-void cleanup(char *pkg, FILE *file) {
-    if (file != NULL) fclose(file);
-    rm_pkg(pkg);
 }
 
 int prompt_install(char *pkg, int danger) {
@@ -257,19 +281,17 @@ int prompt_install(char *pkg, int danger) {
     printf("Do you want to install '%s'? [y/N] ", pkg);
     char ans[8];
     if (fgets(ans, sizeof(ans), stdin) && (ans[0] == 'y' || ans[0] == 'Y'))
-        return 1;
-    printf("Install cancelled.\n");
+    return 1;
+	printf("Install cancelled.\n");
     return 0;
 }
-void do_install(char *pkg) {
-    aur_clone(pkg);
+void do_install(char *pkg, char *clone_dir) {
+    aur_clone(pkg,clone_dir);
     char cmd[256];
-    snprintf(cmd, sizeof(cmd), "cd %s && makepkg -si", pkg);
+    snprintf(cmd, sizeof(cmd), "cd %s && makepkg -si", clone_dir);
     int status = system(cmd);
-    rm_pkg(pkg);
-    if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
-        printf("'%s' installed successfully.\n", pkg);
-    else
+    rm_pkg(clone_dir);
+    if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
         printf("Installation of '%s' failed.\n", pkg);
 }
 int parser(FILE *file, char *s) {
@@ -298,7 +320,7 @@ int parser(FILE *file, char *s) {
 			b64_len++;
 		    else
 			b64_len = 0;
-		    if (b64_len > 50) {
+		    if (b64_len > 50 && strstr(s, "sha256sums") == NULL && strstr(s, "md5sums") == NULL) {
 			printf(YELLOW "  Possible base64 payload detected on line %i\n" RESET, linecount);
 			danger += 7;
 			break;

