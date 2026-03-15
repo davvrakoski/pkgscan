@@ -13,7 +13,6 @@ struct flagables keyphrases[] = {
     {"| sh",                     10},
     {"eval",                      5},
     {"python -c",                 5},
-    {"SKIP",                     2},
     {"| bash",    10},
     {"| sh",      10},
     {"eval ",      8},
