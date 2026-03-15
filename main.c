@@ -138,9 +138,9 @@ void print_risk(char *name, int danger, int suspicion_count, struct suspicion *f
     }
     if (danger == 0 && suspicion_count == 0)
         printf(GREEN BOLD "Low Risk" RESET " | Danger: %i\n", danger);
-    else if (danger <= 10)
+    else if (danger <= 15)
         printf(YELLOW BOLD "Medium Risk" RESET " | Danger: %i\n", danger);
-    else if (danger < 20)
+    else if (danger <= 35)
         printf(RED BOLD "High Risk" RESET " | Danger: %i\n", danger);
     else
         printf(RED BOLD "CRITICAL" RESET " | Danger: %i\n", danger);
@@ -276,7 +276,7 @@ void rm_pkg(char *clone_dir) {
 }
 
 int prompt_install(char *pkg, int danger) {
-    if (danger >= 10)
+    if (danger >= 16)
         printf(RED BOLD "\n*** WARNING: High risk score. Suspicious patterns found in PKGBUILD. ***\n" RESET);
     printf("Do you want to install '%s'? [y/N] ", pkg);
     char ans[8];
@@ -313,20 +313,24 @@ int parser(FILE *file, char *s) {
 		}
 		keywordsfound = 0;
 		linecount += 1;
-		int b64_len = 0;
-		for (int j = 0; s[j]; j++) {
-		    if ((s[j] >= 'A' && s[j] <= 'Z') || (s[j] >= 'a' && s[j] <= 'z') ||
-			(s[j] >= '0' && s[j] <= '9') || s[j] == '+' || s[j] == '/' || s[j] == '=')
-			b64_len++;
-		    else
-			b64_len = 0;
-		    if (b64_len > 50 && strstr(s, "sha256sums") == NULL && strstr(s, "md5sums") == NULL) {
-			printf(YELLOW "  Possible base64 payload detected on line %i\n" RESET, linecount);
-			danger += 7;
-			break;
-			}
-		}
-		if (strstr(s, "source=") != NULL) {
+	int b64_len = 0;
+	int has_b64_chars = 0;
+	for (int j = 0; s[j]; j++) {
+	    if ((s[j] >= 'A' && s[j] <= 'Z') || (s[j] >= 'a' && s[j] <= 'z') ||
+		(s[j] >= '0' && s[j] <= '9') || s[j] == '+' || s[j] == '/' || s[j] == '=')
+		b64_len++;
+	    else
+		b64_len = 0;
+	    if (s[j] == '+' || s[j] == '/') has_b64_chars = 1;
+	    if (b64_len > 50 && has_b64_chars &&
+		strstr(s, "sha256sums") == NULL &&
+		strstr(s, "md5sums") == NULL) {
+		printf(YELLOW "  Possible base64 payload detected on line %i\n" RESET, linecount);
+		danger += 7;
+		break;
+	    }
+	}
+			if (strstr(s, "source=") != NULL) {
 		    int dots = 0, digits = 0;
 		    for (int j = 0; s[j]; j++) {
 			if (s[j] == '.') dots++;

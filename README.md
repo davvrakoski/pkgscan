@@ -44,9 +44,9 @@ Keywords are defined in `keywords.h` and can be edited before recompiling.
 | Level    | Score | Description                          |
 |----------|-------|--------------------------------------|
 | Low      | 0     | No suspicious patterns found         |
-| Medium   | 1-10  | Some patterns detected               |
-| High     | 11-19 | Suspicious patterns, review advised  |
-| Critical | 20+   | Multiple serious patterns detected   |
+| Medium   | 1-15  | Some patterns detected               |
+| High     | 16-35 | Suspicious patterns, review advised  |
+| Critical | 35+   | Multiple serious patterns detected   |
 
 ## Limitations
 - Static analysis only so obfuscated or encoded payloads may bypass detection
