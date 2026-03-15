@@ -12,7 +12,7 @@ install: all
 	install -m 755 $(TARGET) /usr/local/bin/$(TARGET)
 
 uninstall:
-	rm -f /usr/local/bin/$(TARGET)
+	rm -f /usr//bin/$(TARGET)
 
 clean:
 	rm -f $(TARGET)
