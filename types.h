@@ -24,4 +24,11 @@ struct memory {
 struct suspicion {
     char *reason;
 };
+
+typedef struct {
+    char bash[512];
+    char zsh[512];
+    char fish[512];
+} rc_paths;
+
 #endif

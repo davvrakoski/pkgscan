@@ -8,6 +8,8 @@
 #include <time.h>
 #include <ctype.h>
 #include "keywords.h"
+#include <unistd.h>
+#include "hook.h"
 
 #define RESET   "\033[0m"
 #define RED     "\033[31m"
@@ -170,109 +172,120 @@ static const char* get_aur_helper() {
 }
 
 int main(int argc, char *argv[]) {
-		if (argc < 2) {
-	    printf("Usage: %s <package> [package2 ...]\n", argv[0]);
-	    return 1;
-	}
-	if (argc == 2 && strcmp(argv[1], "--help") == 0) {
-	    printf(BOLD "pkgscan" RESET " - AUR Package Security Scanner\n\n");
-	    printf(BOLD "Usage:\n" RESET);
-	    printf("  pkgscan --test <path>   Scan a local PKGBUILD directory\n");
-	    printf("  pkgscan <package>    Scan an AUR package before installing\n");
-	    printf(BOLD "Danger Levels:\n" RESET);
-	    printf(GREEN "  Low     " RESET "0        No suspicious patterns found\n");
-	    printf(YELLOW "  Medium  " RESET "1-10     Some patterns detected, review recommended\n");
-	    printf(RED "  High    " RESET "11-19    Suspicious patterns found\n");
-	    printf(RED "  Critical" RESET " 20+     Multiple serious patterns detected\n\n");
-	    printf(BOLD "Keywords config:\n" RESET);
-	    printf("  Edit keywords.h and recompile to add/remove patterns\n");
-	    return 0;
-	}
-		if (system("command -v git > /dev/null 2>&1") != 0) {
-	    printf(RED "Error: git is not installed\n" RESET);
-	    return 1;
-	}
-	if (system("command -v makepkg > /dev/null 2>&1") != 0) {
-	    printf(RED "Error: makepkg is not installed (base-devel required)\n" RESET);
-	    return 1;
-	}
-	if (argc == 3 && strcmp(argv[1], "--test") == 0) {
-    	struct suspicion flags[16] = {0};
-    	int danger = scan_pkgbuild(argv[2]);
-    	if (danger >= 0) print_risk(argv[2], danger, 0, flags);
-    	return 0;
-	}
+        if (argc < 2) {
+        printf("Usage: %s <package> [package2 ...]\n", argv[0]);
+        return 1;
+    }
+    if (argc == 2 && strcmp(argv[1], "--help") == 0) {
+        printf(BOLD "pkgscan" RESET " - AUR Package Security Scanner\n\n");
+        printf(BOLD "Usage:\n" RESET);
+        printf("  pkgscan --test <path>   Scan a local PKGBUILD directory\n");
+        printf("  pkgscan --hook enable    Install shell hook for paru/yay\n");
+        printf("  pkgscan --hook disable   Remove shell hook\n");
+       printf("  pkgscan --hook status    Show hook status per shell\n");
+        printf("  pkgscan <package>    Scan an AUR package before installing\n");
+        printf(BOLD "Danger Levels:\n" RESET);
+        printf(GREEN "  Low     " RESET "0        No suspicious patterns found\n");
+        printf(YELLOW "  Medium  " RESET "1-15     Some patterns detected, review recommended\n");
+        printf(RED "  High    " RESET "16-35    Suspicious patterns found\n");
+        printf(RED "  Critical" RESET " 35+     Multiple serious patterns detected\n\n");
+        printf(BOLD "Keywords config:\n" RESET);
+        printf("  Edit keywords.h and recompile to add/remove patterns\n");
+        return 0;
+    }
+        if (system("command -v git > /dev/null 2>&1") != 0) {
+        printf(RED "Error: git is not installed\n" RESET);
+        return 1;
+    }
+    if (system("command -v makepkg > /dev/null 2>&1") != 0) {
+        printf(RED "Error: makepkg is not installed (base-devel required)\n" RESET);
+        return 1;
+    }
+    if (argc == 3 && strcmp(argv[1], "--test") == 0) {
+        struct suspicion flags[16] = {0};
+        int danger = scan_pkgbuild(argv[2]);
+        if (danger >= 0) print_risk(argv[2], danger, 0, flags);
+        return 0;
+    }
+    if (argc == 3 && strcmp(argv[1], "--hook") == 0) {
+        const char *home = getenv("HOME");
+        if (!home) { printf(RED "Error: $HOME not set\n" RESET); return 1; }
+        if      (strcmp(argv[2], "enable")  == 0) hook_enable(home);
+        else if (strcmp(argv[2], "disable") == 0) hook_disable(home);
+        else if (strcmp(argv[2], "status")  == 0) hook_status(home);
+        else printf(RED "Usage: pkgscan --hook [enable|disable|status]\n" RESET);
+        return 0;
+}
+    for (int i = 1; i < argc; i++) {
+    char *pkg = argv[i];
+    if (!validate_pkg_name(pkg)) return 1;
+    printf(BOLD "\n=== Scanning package %i of %i: '%s' ===\n" RESET, i, argc - 1, pkg);
+    struct pkg_metadata meta;
+    struct suspicion flags[16];
+        int suspicion_count = 0;
 
-	for (int i = 1; i < argc; i++) {
-	char *pkg = argv[i];
-	if (!validate_pkg_name(pkg)) return 1;
-	printf(BOLD "\n=== Scanning package %i of %i: '%s' ===\n" RESET, i, argc - 1, pkg);
-	struct pkg_metadata meta;
-	struct suspicion flags[16];
-		int suspicion_count = 0;
-
-		if (fetch_metadata(pkg, &meta) == 0) {
-	    printf("Maintainer: %s | Votes: %i | Out of date: %s\n",
-		meta.maintainer,
-		meta.votes,
-		meta.out_of_date ? "YES" : "No");
-	    suspicion_count = check_suspicion(&meta, flags);
-	} else {
-	char check_cmd[256];
-    	snprintf(check_cmd, sizeof(check_cmd), "pacman -Si %s > /dev/null 2>&1", pkg);
-   	 if (system(check_cmd) == 0) {
+        if (fetch_metadata(pkg, &meta) == 0) {
+        printf("Maintainer: %s | Votes: %i | Out of date: %s\n",
+        meta.maintainer,
+        meta.votes,
+        meta.out_of_date ? "YES" : "No");
+        suspicion_count = check_suspicion(&meta, flags);
+    } else {
+    char check_cmd[256];
+        snprintf(check_cmd, sizeof(check_cmd), "pacman -Si %s > /dev/null 2>&1", pkg);
+     if (system(check_cmd) == 0) {
         printf("'%s' is an official repo package, skipping scan.\n", pkg);
         const char *helper = get_aur_helper();
-	if (helper == NULL) {
-	    printf(RED "Error: No AUR helper found (yay/paru)\n" RESET);
-	    continue;
-	}
-	char install_cmd[256];
-	snprintf(install_cmd, sizeof(install_cmd), "%s -S %s", helper, pkg);
-	system(install_cmd);
-	continue;    
-	}
-	    printf("Warning: Could not fetch AUR metadata\n");
-	}
-	char clone_dir[256];
-	snprintf(clone_dir, sizeof(clone_dir), "/tmp/pkgscan-%s", pkg);
-	aur_clone(pkg, clone_dir);
-	int danger = scan_pkgbuild(clone_dir);
-	if (danger >= 0) {
-    	print_risk(pkg, danger, suspicion_count, flags);
-    	rm_pkg(clone_dir);
-    	if (prompt_install(pkg, danger))
-        	do_install(pkg, clone_dir);
-	} 	
-	else {
-    	rm_pkg(clone_dir);
-	    }
-	}
+    if (helper == NULL) {
+        printf(RED "Error: No AUR helper found (yay/paru)\n" RESET);
+        continue;
+    }
+    char install_cmd[256];
+    snprintf(install_cmd, sizeof(install_cmd), "%s -S %s", helper, pkg);
+    system(install_cmd);
+    continue;    
+    }
+        printf("Warning: Could not fetch AUR metadata\n");
+    }
+    char clone_dir[256];
+    snprintf(clone_dir, sizeof(clone_dir), "/tmp/pkgscan-%s", pkg);
+    aur_clone(pkg, clone_dir);
+    int danger = scan_pkgbuild(clone_dir);
+    if (danger >= 0) {
+        print_risk(pkg, danger, suspicion_count, flags);
+        rm_pkg(clone_dir);
+        if (prompt_install(pkg, danger))
+            do_install(pkg, clone_dir);
+    }   
+    else {
+        rm_pkg(clone_dir);
+        }
+    }
 }
 
 void aur_clone(char *pkg, char *clone_dir) {
-	const char *repo_url = "https://aur.archlinux.org/";
-	const char *command = "git clone ";
-	char full_command[256]; 
-	snprintf(full_command, sizeof(full_command), "%s%s%s.git %s", command, repo_url, pkg, clone_dir);
+    const char *repo_url = "https://aur.archlinux.org/";
+    const char *command = "git clone ";
+    char full_command[256]; 
+    snprintf(full_command, sizeof(full_command), "%s%s%s.git %s", command, repo_url, pkg, clone_dir);
 
-	int status = system(full_command);
-	
+    int status = system(full_command);
+    
     if (status == -1) {
         perror("system");
     } else {
         if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-            printf("git clone failed\n");
+        printf("git clone failed\n");
         }
     }
 }
 void rm_pkg(char *clone_dir) {
-	char rm_cmd[256];
-	snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", clone_dir);
-	int status = system(rm_cmd);
-	if (status == -1) {
-	perror("system");
-	}
+    char rm_cmd[256];
+    snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf %s", clone_dir);
+    int status = system(rm_cmd);
+    if (status == -1) {
+    perror("system");
+    }
 }
 
 int prompt_install(char *pkg, int danger) {
@@ -281,8 +294,8 @@ int prompt_install(char *pkg, int danger) {
     printf("Do you want to install '%s'? [y/N] ", pkg);
     char ans[8];
     if (fgets(ans, sizeof(ans), stdin) && (ans[0] == 'y' || ans[0] == 'Y'))
-    return 1;
-	printf("Install cancelled.\n");
+        return 1;
+    printf("Install cancelled.\n");
     return 0;
 }
 void do_install(char *pkg, char *clone_dir) {
@@ -295,52 +308,52 @@ void do_install(char *pkg, char *clone_dir) {
         printf("Installation of '%s' failed.\n", pkg);
 }
 int parser(FILE *file, char *s) {
-	int danger = 0;
-	int keywordsfound = 0;
-	int linecount = 1;
+    int danger = 0;
+    int keywordsfound = 0;
+    int linecount = 1;
 
-	while (fgets(s, LINE_LENGTH, file) != NULL) {
-		for (int i = 0; i < num_keywords; i++) {
-			if (strstr(s, keyphrases[i].strings) != NULL) {
-				keywordsfound += 1;
-				danger += keyphrases[i].warning_lvl;
-				printf(YELLOW "  [Line %i] Matched: '%s' (weight: %i)\n" RESET,
+    while (fgets(s, LINE_LENGTH, file) != NULL) {
+        for (int i = 0; i < num_keywords; i++) {
+            if (strstr(s, keyphrases[i].strings) != NULL) {
+                keywordsfound += 1;
+                danger += keyphrases[i].warning_lvl;
+                printf(YELLOW "  [Line %i] Matched: '%s' (weight: %i)\n" RESET,
                 linecount, keyphrases[i].strings, keyphrases[i].warning_lvl);
-			}
-		};
-		if (keywordsfound > 0) {
-	          printf(YELLOW "  ^ %i keyword(s) on line %i\n" RESET, keywordsfound, linecount);
-		}
-		keywordsfound = 0;
-		linecount += 1;
-	int b64_len = 0;
-	int has_b64_chars = 0;
-	for (int j = 0; s[j]; j++) {
-	    if ((s[j] >= 'A' && s[j] <= 'Z') || (s[j] >= 'a' && s[j] <= 'z') ||
-		(s[j] >= '0' && s[j] <= '9') || s[j] == '+' || s[j] == '/' || s[j] == '=')
-		b64_len++;
-	    else
-		b64_len = 0;
-	    if (s[j] == '+' || s[j] == '/') has_b64_chars = 1;
-	    if (b64_len > 50 && has_b64_chars &&
-		strstr(s, "sha256sums") == NULL &&
-		strstr(s, "md5sums") == NULL) {
-		printf(YELLOW "  Possible base64 payload detected on line %i\n" RESET, linecount);
-		danger += 7;
-		break;
-	    }
-	}
-			if (strstr(s, "source=") != NULL) {
-		    int dots = 0, digits = 0;
-		    for (int j = 0; s[j]; j++) {
-			if (s[j] == '.') dots++;
-			if (s[j] >= '0' && s[j] <= '9') digits++;
-		    }
-		    if (dots == 3 && digits >= 4) {
-			printf(YELLOW "  Suspicious IP address in source URL on line %i\n" RESET, linecount);
-			danger += 8;
-		    }
-		}
-	}
-	return danger;
+            }
+        };
+        if (keywordsfound > 0) {
+              printf(YELLOW "  ^ %i keyword(s) on line %i\n" RESET, keywordsfound, linecount);
+        }
+        keywordsfound = 0;
+        linecount += 1;
+    int b64_len = 0;
+    int has_b64_chars = 0;
+    for (int j = 0; s[j]; j++) {
+        if ((s[j] >= 'A' && s[j] <= 'Z') || (s[j] >= 'a' && s[j] <= 'z') ||
+        (s[j] >= '0' && s[j] <= '9') || s[j] == '+' || s[j] == '/' || s[j] == '=')
+        b64_len++;
+        else
+        b64_len = 0;
+        if (s[j] == '+' || s[j] == '/') has_b64_chars = 1;
+        if (b64_len > 50 && has_b64_chars &&
+        strstr(s, "sha256sums") == NULL &&
+        strstr(s, "md5sums") == NULL) {
+            printf(YELLOW "  Possible base64 payload detected on line %i\n" RESET, linecount);
+            danger += 7;
+            break;
+        }
+    }
+            if (strstr(s, "source=") != NULL) {
+            int dots = 0, digits = 0;
+            for (int j = 0; s[j]; j++) {
+            if (s[j] == '.') dots++;
+            if (s[j] >= '0' && s[j] <= '9') digits++;
+            }
+            if (dots == 3 && digits >= 4) {
+            printf(YELLOW "  Suspicious IP address in source URL on line %i\n" RESET, linecount);
+            danger += 8;
+            }
+        }
+    }
+    return danger;
 }
