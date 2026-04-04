@@ -26,6 +26,7 @@ static const char *BASH_ZSH_SNIPPET =
     "    for arg in \"$@\"; do\n"
     "        case \"$arg\" in\n"
     "            -S|--sync) do_scan=1; break ;;\n"
+    "            -R|--remove|-Rns|-Rn|-Rs) do_scan=0; break ;;\n"
     "            -*) ;;\n"
     "            *) do_scan=1; break ;;\n"
     "        esac\n"
@@ -45,13 +46,14 @@ static const char *BASH_ZSH_SNIPPET =
     "            if ! command -v pkgscan &>/dev/null; then\n"
     "                printf '\\033[33mpkgscan not found — hook inactive\\033[0m\\n'\n"
     "            else\n"
-    "                pkgscan \"${pkgs[@]}\"\n"
+    "                pkgscan \"${pkgs[@]}\" --hook-mode\n"
+    "                if [ $? -ne 0 ]; then return 1; fi\n"
     "            fi\n"
     "        fi\n"
     "    fi\n"
     "    command \"$helper\" \"$@\"\n"
-        "}\n"
-       "if command -v paru &>/dev/null; then\n"
+    "}\n"
+    "if command -v paru &>/dev/null; then\n"
     "    paru() { _pkgscan_wrap_aur paru \"$@\"; }\n"
     "fi\n"
     "if command -v yay &>/dev/null; then\n"
@@ -69,6 +71,8 @@ static const char *FISH_SNIPPET =
     "        switch $arg\n"
     "            case '-S' '--sync'\n"
     "                set do_scan 1\n"
+    "            case '-R' '--remove' '-Rns' '-Rn' '-Rs'\n"
+    "                set do_scan 0\n"
     "            case '-*'\n"
     "                true\n"
     "            case '*'\n"
@@ -94,7 +98,8 @@ static const char *FISH_SNIPPET =
     "            if not command -v pkgscan &>/dev/null\n"
     "                echo (set_color yellow)'pkgscan not found — hook inactive'(set_color normal)\n"
     "            else\n"
-    "                pkgscan $pkgs\n"
+    "                pkgscan $pkgs --hook-mode\n"
+    "                if test $status -ne 0; return 1; end\n"
     "            end\n"
     "        end\n"
     "    end\n"
@@ -107,7 +112,6 @@ static const char *FISH_SNIPPET =
     "    function yay; _pkgscan_wrap_aur yay $argv; end\n"
     "end\n"
     "\n";
-
 static void resolve_rc_paths(const char *home, rc_paths *paths) {
     snprintf(paths->bash, sizeof(paths->bash), "%s/.bashrc",                  home);
     snprintf(paths->zsh,  sizeof(paths->zsh),  "%s/.zshrc",                   home);
