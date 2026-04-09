@@ -38,7 +38,7 @@ pkgscan pkg1 pkg2 pkg3
 ```
 Or Use the makepkg hook:
 ```bash
-pkgscan --hoke enable
+pkgscan --hook enable
 (Restart Shell)
 ```
 Then pkgscan will run automatically when using an AUR helper.
