@@ -318,6 +318,49 @@ void update_db(const char *db_path, const char *pkgname, const char *source,
     cJSON_Delete(db);
 }
 
+int find_local_pkgbuild_via_proc(const char *pkgname, char *path_out, size_t max_len) {
+    pid_t pid = getpid();
+    for (int depth = 0; depth < 5; depth++) {
+        char stat_path[256];
+        snprintf(stat_path, sizeof(stat_path), "/proc/%d/stat", pid);
+        FILE *f = fopen(stat_path, "r");
+        if (!f) break;
+        pid_t ppid = 0;
+        char comm[256];
+        if (fscanf(f, "%*d %255s %*c %d", comm, &ppid) != 2) {
+            fclose(f);
+            break;
+        }
+        fclose(f);
+
+        if (ppid <= 1) break;
+
+        char cwd_link[512];
+        snprintf(cwd_link, sizeof(cwd_link), "/proc/%d/cwd", ppid);
+        char cwd_path[512];
+        ssize_t len = readlink(cwd_link, cwd_path, sizeof(cwd_path) - 1);
+        if (len > 0) {
+            cwd_path[len] = 0;
+            
+            char pkgbuild_path[1024];
+            snprintf(pkgbuild_path, sizeof(pkgbuild_path), "%s/PKGBUILD", cwd_path);
+            if (access(pkgbuild_path, F_OK) == 0) {
+                strncpy(path_out, cwd_path, max_len - 1);
+                path_out[max_len - 1] = 0;
+                return 0;
+            }
+
+            snprintf(pkgbuild_path, sizeof(pkgbuild_path), "%s/%s/PKGBUILD", cwd_path, pkgname);
+            if (access(pkgbuild_path, F_OK) == 0) {
+                snprintf(path_out, max_len, "%s/%s", cwd_path, pkgname);
+                return 0;
+            }
+        }
+        pid = ppid;
+    }
+    return -1;
+}
+
 int prompt_install_tty(const char *pkg, int danger) {
     if (danger >= 16) {
         FILE *tty_err = fopen("/dev/tty", "w");
@@ -627,13 +670,35 @@ int main(int argc, char *argv[]) {
         int danger = -1;
 
         char local_pkgbuild_dir[512] = "";
-        const char *user_home = get_user_home();
-        if (user_home) {
-            snprintf(local_pkgbuild_dir, sizeof(local_pkgbuild_dir), "%s/.cache/paru/clone/%s", user_home, pkg);
-            char full_local_path[1024];
-            snprintf(full_local_path, sizeof(full_local_path), "%s/PKGBUILD", local_pkgbuild_dir);
-            if (access(full_local_path, F_OK) == 0) {
-                danger = scan_pkgbuild(local_pkgbuild_dir);
+        
+        // 1. Try process tree search
+        if (find_local_pkgbuild_via_proc(pkg, local_pkgbuild_dir, sizeof(local_pkgbuild_dir)) == 0) {
+            danger = scan_pkgbuild(local_pkgbuild_dir);
+        }
+
+        // 2. Try paru cache
+        if (danger < 0) {
+            const char *user_home = get_user_home();
+            if (user_home) {
+                snprintf(local_pkgbuild_dir, sizeof(local_pkgbuild_dir), "%s/.cache/paru/clone/%s", user_home, pkg);
+                char full_local_path[1024];
+                snprintf(full_local_path, sizeof(full_local_path), "%s/PKGBUILD", local_pkgbuild_dir);
+                if (access(full_local_path, F_OK) == 0) {
+                    danger = scan_pkgbuild(local_pkgbuild_dir);
+                }
+            }
+        }
+
+        // 3. Try yay cache
+        if (danger < 0) {
+            const char *user_home = get_user_home();
+            if (user_home) {
+                snprintf(local_pkgbuild_dir, sizeof(local_pkgbuild_dir), "%s/.cache/yay/%s", user_home, pkg);
+                char full_local_path[1024];
+                snprintf(full_local_path, sizeof(full_local_path), "%s/PKGBUILD", local_pkgbuild_dir);
+                if (access(full_local_path, F_OK) == 0) {
+                    danger = scan_pkgbuild(local_pkgbuild_dir);
+                }
             }
         }
 
