@@ -18,100 +18,8 @@
 #define HOOK_MARKER_START "# [pkgscan] shell hook"
 #define HOOK_MARKER_END   "# [pkgscan] end"
 
-static const char *BASH_ZSH_SNIPPET =
-    "\n"
-    "_pkgscan_wrap_aur() {\n"
-    "    local helper=\"$1\"; shift\n"
-    "    local do_scan=0\n"
-    "    for arg in \"$@\"; do\n"
-    "        case \"$arg\" in\n"
-    "            -S|--sync) do_scan=1; break ;;\n"
-    "            -R|--remove|-Rns|-Rn|-Rs) do_scan=0; break ;;\n"
-    "            -*) ;;\n"
-    "            *) do_scan=1; break ;;\n"
-    "        esac\n"
-    "    done\n"
-    "    if (( do_scan )); then\n"
-    "        local pkgs=()\n"
-    "        local skip_next=0\n"
-    "        for arg in \"$@\"; do\n"
-    "            if (( skip_next )); then skip_next=0; continue; fi\n"
-    "            case \"$arg\" in\n"
-    "                --mflags|--config|--makepkgconf) skip_next=1 ;;\n"
-    "                -*) ;;\n"
-    "                *) pkgs+=(\"$arg\") ;;\n"
-    "            esac\n"
-    "        done\n"
-    "        if (( ${#pkgs[@]} > 0 )); then\n"
-    "            if ! command -v pkgscan &>/dev/null; then\n"
-    "                printf '\\033[33mpkgscan not found — hook inactive\\033[0m\\n'\n"
-    "            else\n"
-    "                pkgscan \"${pkgs[@]}\" --hook-mode\n"
-    "                if [ $? -ne 0 ]; then return 1; fi\n"
-    "            fi\n"
-    "        fi\n"
-    "    fi\n"
-    "    command \"$helper\" \"$@\"\n"
-    "}\n"
-    "if command -v paru &>/dev/null; then\n"
-    "    paru() { _pkgscan_wrap_aur paru \"$@\"; }\n"
-    "fi\n"
-    "if command -v yay &>/dev/null; then\n"
-    "    yay() { _pkgscan_wrap_aur yay \"$@\"; }\n"
-    "fi\n"
-    "\n";
+void hook_disable(const char *home);
 
-static const char *FISH_SNIPPET =
-    "\n"
-    "function _pkgscan_wrap_aur\n"
-    "    set helper $argv[1]\n"
-    "    set args $argv[2..]\n"
-    "    set do_scan 0\n"
-    "    for arg in $args\n"
-    "        switch $arg\n"
-    "            case '-S' '--sync'\n"
-    "                set do_scan 1\n"
-    "            case '-R' '--remove' '-Rns' '-Rn' '-Rs'\n"
-    "                set do_scan 0\n"
-    "            case '-*'\n"
-    "                true\n"
-    "            case '*'\n"
-    "                set do_scan 1\n"
-    "        end\n"
-    "        if test $do_scan -eq 1; break; end\n"
-    "    end\n"
-    "    if test $do_scan -eq 1\n"
-    "        set pkgs\n"
-    "        set skip_next 0\n"
-    "        for arg in $args\n"
-    "            if test $skip_next -eq 1; set skip_next 0; continue; end\n"
-    "            switch $arg\n"
-    "                case '--mflags' '--config' '--makepkgconf'\n"
-    "                    set skip_next 1\n"
-    "                case '-*'\n"
-    "                    true\n"
-    "                case '*'\n"
-    "                    set pkgs $pkgs $arg\n"
-    "            end\n"
-    "        end\n"
-    "        if test (count $pkgs) -gt 0\n"
-    "            if not command -v pkgscan &>/dev/null\n"
-    "                echo (set_color yellow)'pkgscan not found — hook inactive'(set_color normal)\n"
-    "            else\n"
-    "                pkgscan $pkgs --hook-mode\n"
-    "                if test $status -ne 0; return 1; end\n"
-    "            end\n"
-    "        end\n"
-    "    end\n"
-    "    command $helper $args\n"
-    "end\n"
-    "if command -v paru &>/dev/null\n"
-    "    function paru; _pkgscan_wrap_aur paru $argv; end\n"
-    "end\n"
-    "if command -v yay &>/dev/null\n"
-    "    function yay; _pkgscan_wrap_aur yay $argv; end\n"
-    "end\n"
-    "\n";
 static void resolve_rc_paths(const char *home, rc_paths *paths) {
     snprintf(paths->bash, sizeof(paths->bash), "%s/.bashrc",                  home);
     snprintf(paths->zsh,  sizeof(paths->zsh),  "%s/.zshrc",                   home);
@@ -131,37 +39,22 @@ static int hook_present(const char *path) {
     return found;
 }
 
-static int hook_append(const char *path, const char *snippet) {
-    char date_str[16];
-    time_t now = time(NULL);
-    strftime(date_str, sizeof(date_str), "%Y-%m-%d", localtime(&now));
-
-    FILE *f = fopen(path, "a+");
-    if (!f) { perror(path); return -1; }
-    if (fseek(f, -1, SEEK_END) == 0 && fgetc(f) != '\n')
-        fputc('\n', f);
-    fprintf(f, "\n%s added %s — do not edit manually\n", HOOK_MARKER_START, date_str);
-    fputs(snippet, f);
-    fprintf(f, "%s\n", HOOK_MARKER_END);
-    fclose(f);
-    return 0;
-}
-
 static int hook_strip(const char *path) {
     FILE *f = fopen(path, "r");
-if (!f) { perror(path); return -1; }
+    if (!f) return 0;
 
     char tmp_path[512];
     snprintf(tmp_path, sizeof(tmp_path), "%s.pkgscan_tmp", path);
     FILE *tmp = fopen(tmp_path, "w");
-if (!tmp) { perror(tmp_path); fclose(f); return -1; }    int in_block = 0;
+    if (!tmp) { perror(tmp_path); fclose(f); return -1; }
+    int in_block = 0;
     char *line = NULL;
     size_t cap = 0;
     while (getline(&line, &cap, f) != -1) {
         if (strncmp(line, HOOK_MARKER_START, strlen(HOOK_MARKER_START)) == 0) { in_block = 1; continue; }
         if (in_block && strncmp(line, HOOK_MARKER_END, strlen(HOOK_MARKER_END)) == 0) { in_block = 0; continue; }
         if (!in_block) fputs(line, tmp);
-}
+    }
     free(line);
     fclose(f);
     fflush(tmp);
@@ -169,37 +62,13 @@ if (!tmp) { perror(tmp_path); fclose(f); return -1; }    int in_block = 0;
     fclose(tmp);
 
     if (rename(tmp_path, path) != 0) {
-    perror(tmp_path);
-    remove(tmp_path);
-    return -1;
-    };
-    return 0;
-}
-
-static int copy_file(const char *src, const char *dst) {
-    FILE *in = fopen(src, "rb");
-    if (!in) return -1;
-    FILE *out = fopen(dst, "wb");
-    if (!out) { fclose(in); return -1; }
-    char buf[8192];
-    size_t n;
-    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
-        if (fwrite(buf, 1, n, out) != n) {
-            fclose(in); fclose(out);
-            return -1;
-        }
+        perror(tmp_path);
+        remove(tmp_path);
+        return -1;
     }
-    fclose(in);
-    fclose(out);
     return 0;
 }
 
-static void backup_rc(const char *path) {
-    char backup[512];
-    snprintf(backup, sizeof(backup), "%s.pkgscan_bak", path);
-    if (copy_file(path, backup) != 0)
-        perror("backup");
-}
 static int hook_has_valid_block(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) return 0;
@@ -216,60 +85,86 @@ static int hook_has_valid_block(const char *path) {
     fclose(f);
     return seen_start && seen_end;
 }
-void hook_enable(const char *home) {
-    rc_paths paths;
-    resolve_rc_paths(home, &paths);
 
-    const char *posix_rcs[] = { paths.bash, paths.zsh };
-    for (int i = 0; i < 2; i++) {
-        if (hook_present(posix_rcs[i]))
-            printf(YELLOW "Already enabled: %s\n" RESET, posix_rcs[i]);
-        else {
-            backup_rc(posix_rcs[i]);
-            if (hook_append(posix_rcs[i], BASH_ZSH_SNIPPET) == 0)
-                printf(GREEN "Enabled: %s\n" RESET, posix_rcs[i]);
-            else
-            printf(RED "Could not write to %s\n" RESET, posix_rcs[i]);
-        }
+void hook_enable(const char *home) {
+    // 1. Clean up legacy shell hooks
+    hook_disable(home);
+
+    // 2. Write the new ALPM hook
+    const char *hook_dir = "/etc/pacman.d/hooks";
+    char hook_path[512];
+    snprintf(hook_path, sizeof(hook_path), "%s/pkgscan.hook", hook_dir);
+
+    // Create hook dir if it doesn't exist
+    char mkdir_cmd[512];
+    snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p %s", hook_dir);
+    if (system(mkdir_cmd) != 0) {
+        printf(RED "Failed to create hook directory. Please run with sudo: 'sudo pkgscan --hook enable'\n" RESET);
+        return;
     }
-    if (hook_present(paths.fish))
-        printf(YELLOW "Already enabled: %s\n" RESET, paths.fish);
-    else {
-    backup_rc(paths.fish);
-    if (hook_append(paths.fish, FISH_SNIPPET) == 0)
-        printf(GREEN "Enabled: %s\n" RESET, paths.fish);
-    else
-        printf(RED "Could not write to %s\n" RESET, paths.fish);
+
+    FILE *f = fopen(hook_path, "w");
+    if (!f) {
+        perror("Error creating pacman hook file (requires root privileges/sudo)");
+        printf(RED "Failed to enable hook. Please run with sudo: 'sudo pkgscan --hook enable'\n" RESET);
+        return;
     }
-    printf(BOLD "\nRestart Shell to apply changes\n" RESET);
+
+    fprintf(f, "[Trigger]\n");
+    fprintf(f, "Operation = Install\n");
+    fprintf(f, "Operation = Upgrade\n");
+    fprintf(f, "Type = Package\n");
+    fprintf(f, "Target = *\n\n");
+    fprintf(f, "[Action]\n");
+    fprintf(f, "Description = Running pkgscan on package updates...\n");
+    fprintf(f, "When = PreTransaction\n");
+    fprintf(f, "Exec = /usr/local/bin/pkgscan --hook-mode\n");
+    fprintf(f, "NeedsTargets\n");
+    fclose(f);
+
+    printf(GREEN "ALPM pacman hook successfully created at %s\n" RESET, hook_path);
 }
 
 void hook_disable(const char *home) {
+    // 1. Clean up shell hooks
     rc_paths paths;
     resolve_rc_paths(home, &paths);
     const char *rcs[] = { paths.bash, paths.zsh, paths.fish };
     for (int i = 0; i < 3; i++) {
         if (!hook_has_valid_block(rcs[i])) {
-    if (hook_present(rcs[i]))
-        printf(RED "Malformed hook block in %s: skipping\n" RESET, rcs[i]);
-    continue;
-}
+            if (hook_present(rcs[i]))
+                printf(RED "Malformed hook block in %s: skipping cleanup\n" RESET, rcs[i]);
+            continue;
+        }
         if (hook_strip(rcs[i]) == 0)
-            printf(GREEN "Disabled: %s\n" RESET, rcs[i]);
+            printf(GREEN "Disabled shell hook in: %s\n" RESET, rcs[i]);
         else
             printf(RED "Could not rewrite %s\n" RESET, rcs[i]);
     }
-    printf(BOLD "\nRestart your shell to apply changes\n" RESET);
+
+    // 2. Remove the ALPM hook
+    const char *hook_path = "/etc/pacman.d/hooks/pkgscan.hook";
+    if (access(hook_path, F_OK) == 0) {
+        if (remove(hook_path) == 0) {
+            printf(GREEN "Removed ALPM pacman hook at %s\n" RESET, hook_path);
+        } else {
+            perror("Error removing pacman hook file");
+            printf(RED "Failed to remove hook. Please run with sudo: 'sudo pkgscan --hook disable'\n" RESET);
+        }
+    }
 }
 
 void hook_status(const char *home) {
     rc_paths paths;
     resolve_rc_paths(home, &paths);
     const char *rcs[] = { paths.bash, paths.zsh, paths.fish };
-    printf(BOLD "Hook status:\n" RESET);
-    for (int i = 0; i < 3; i++)
+    printf(BOLD "Shell Hook Status:\n" RESET);
+    for (int i = 0; i < 3; i++) {
         printf("  %-45s %s\n", rcs[i],
-               hook_present(rcs[i]) ? GREEN "enabled" RESET : YELLOW "not installed" RESET);
+               hook_present(rcs[i]) ? GREEN "enabled (legacy wrapper)" RESET : YELLOW "not installed" RESET);
+    }
+    const char *hook_path = "/etc/pacman.d/hooks/pkgscan.hook";
+    printf(BOLD "ALPM Hook Status:\n" RESET);
+    printf("  %-45s %s\n", hook_path,
+           (access(hook_path, F_OK) == 0) ? GREEN "active" RESET : YELLOW "not active" RESET);
 }
-
-
