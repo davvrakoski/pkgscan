@@ -635,6 +635,11 @@ int main(int argc, char *argv[]) {
         char source[64] = "aur";
         get_package_source(pkg, source, sizeof(source));
 
+        if (strcmp(source, "aur") != 0) {
+            printf(GREEN "Package '%s' (%s) is a repository package. Skipping scan.\n" RESET, pkg, source);
+            continue;
+        }
+
         char pkg_file[512] = "";
         char hash[65] = "";
         char sign_key[41] = "";
