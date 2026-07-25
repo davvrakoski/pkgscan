@@ -13,7 +13,7 @@ install: all
 
 uninstall:
 	@if [ -f /usr/local/bin/$(TARGET) ]; then \
-		echo "Run --hook disable to remove Shell hook config"; \
+		echo "Run 'sudo pkgscan --hook disable' to remove ALPM pacman hook"; \
 	fi
 	rm -f /usr/local/bin/$(TARGET)
 clean:
